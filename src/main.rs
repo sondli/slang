@@ -1,22 +1,25 @@
+use std::{fs::File, io::{self, Read}, path::Path};
 use clap::Parser;
 
-/// Simple program to greet a person
+/// Slang compiler
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    /// Name of the person to greet
-    #[arg(short, long)]
-    name: String,
-
-    /// Number of times to greet
-    #[arg(short, long, default_value_t = 1)]
-    count: u8,
+    #[arg()]
+    filename: String
 }
 
-fn main() {
+fn main() -> io::Result<()> {
     let args = Args::parse();
+    let _exists = match Path::new(&args.filename).try_exists() {
+        Ok(exists) => exists,
+        Err(e) => return Err(e)
+    };
 
-    for _ in 0..args.count {
-        println!("Hello {}!", args.name);
-    }
+    let mut file = File::open(args.filename).expect("File not found");
+    let mut file_content = String::new();
+    let _ = file.read_to_string(&mut file_content);
+
+    println!("{}", file_content);
+    Ok(())
 }
