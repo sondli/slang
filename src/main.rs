@@ -1,4 +1,5 @@
 use clap::Parser;
+use core::panic;
 use std::{
     fs::File,
     io::{self, Read},
@@ -52,19 +53,19 @@ impl ToString for TokenTypes {
 }
 
 trait ToTokenType {
-    fn to_token_type(&self) -> TokenTypes;
+    fn to_token_type(&self) -> Result<TokenTypes, &char>;
 }
 
 impl ToTokenType for char {
-    fn to_token_type(&self) -> TokenTypes {
+    fn to_token_type(&self) -> Result<TokenTypes, &char> {
         match self {
-            '-' => TokenTypes::Minus,
-            '+' => TokenTypes::Plus,
-            ';' => TokenTypes::Semicolon,
-            '*' => TokenTypes::Star,
-            '!' => TokenTypes::Bang,
-            '=' => TokenTypes::Equal,
-            _ => panic!()
+            '-' => Ok(TokenTypes::Minus),
+            '+' => Ok(TokenTypes::Plus),
+            ';' => Ok(TokenTypes::Semicolon),
+            '*' => Ok(TokenTypes::Star),
+            '!' => Ok(TokenTypes::Bang),
+            '=' => Ok(TokenTypes::Equal),
+            _ => Err(self),
         }
     }
 }
@@ -72,7 +73,7 @@ impl ToTokenType for char {
 struct Token {
     raw: char,
     token_type: TokenTypes,
-    line: usize
+    line: usize,
 }
 
 fn main() -> io::Result<()> {
@@ -90,9 +91,13 @@ fn main() -> io::Result<()> {
     let tokens = scan_source(&source_chars);
 
     for token in tokens {
-        println!("char {} with token {} on line {}", token.raw, token.token_type.to_string(), token.line);
-    };
-
+        println!(
+            "char {} with token {} on line {}",
+            token.raw,
+            token.token_type.to_string(),
+            token.line
+        );
+    }
 
     Ok(())
 }
@@ -103,22 +108,25 @@ trait TokenStore {
 
 impl TokenStore for Vec<Token> {
     fn add_token(&mut self, c: char, line: usize) {
+        let token_type = match c.to_token_type() {
+            Ok(t) => t,
+            Err(char) => {
+                let mut message = "Unsupported character: ".to_string();
+                message.push(*char);
+                print_error(line, message);
+                panic!();
+            } 
+        };
         self.push(Token {
             raw: c,
-            token_type: c.to_token_type(),
-            line
-        })
+            token_type,
+            line,
+        });
     }
 }
 
-fn is_at_end(current: usize, source: &Vec<u8>) -> bool {
-    current >= source.len()
-}
-
-fn next_char(source: &Vec<char>, current: &mut usize) -> char {
-    let next = source[*current];
-    *current += 1;
-    next
+fn print_error(line: usize, message: String) {
+    println!("[line {}] Error: {}", line, message);
 }
 
 fn scan_source(source: &Vec<char>) -> Vec<Token> {
