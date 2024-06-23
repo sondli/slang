@@ -157,7 +157,7 @@ fn scan_symbol(source: &Vec<char>, lexeme_start: usize, line: usize) -> Token {
     Token {
         lexeme: token_type.to_string(),
         token_type,
-        line
+        line,
     }
 }
 
