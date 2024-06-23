@@ -172,7 +172,7 @@ fn scan_token(source: &Vec<char>, lexeme_start: usize, line: &mut usize) -> Toke
         let mut next_char = source
             .get(lexeme_start + 1)
             .expect("out of bounds getting next char");
-        while !is_whitespace(*next_char) {
+        while next_char.is_ascii_alphabetic() || next_char.is_ascii_digit() || *next_char == '_' {
             if *next_char == '\n' {
                 *line += 1;
                 break;
@@ -183,7 +183,7 @@ fn scan_token(source: &Vec<char>, lexeme_start: usize, line: &mut usize) -> Toke
                 .expect("out of bounds when getting next char in lexeme");
         }
         let mut lexeme = String::new();
-        let lexeme_end = lexeme_start + lexeme_len - 1;
+        let lexeme_end = lexeme_start + lexeme_len;
         for i in lexeme_start..lexeme_end {
             lexeme.push(*source.get(i).expect("wops"));
         }
@@ -211,25 +211,23 @@ fn scan_token(source: &Vec<char>, lexeme_start: usize, line: &mut usize) -> Toke
 fn scan_source(source: &Vec<char>) -> Vec<Token> {
     let mut tokens = Vec::new();
     let mut line = 1;
+    let mut skip_n_iterations = 0;
 
-    let mut i = 0;
-
-    while i < source.len() {
+    for (i, current) in source.iter().enumerate()  { 
+        if skip_n_iterations > 0 {
+            skip_n_iterations -= 1;
+            continue;
+        }
         let lexeme_start = i;
-        let current = source
-            .get(i)
-            .expect("out of bounds when getting source char");
         if is_whitespace(*current) {
-            i += 1;
             continue;
         }
         if *current == '\n' {
             line += 1;
-            i += 1;
             continue;
         }
         let token = scan_token(source, lexeme_start, &mut line);
-        i += token.lexeme.len();
+        skip_n_iterations = token.lexeme.len() - 1;
         tokens.push(token);
     }
 
