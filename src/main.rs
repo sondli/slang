@@ -1,6 +1,8 @@
 use clap::Parser;
 use core::panic;
+use phf::{phf_map, Map};
 use std::{
+    borrow::Borrow,
     fs::File,
     io::{self, Read},
     path::Path,
@@ -33,7 +35,14 @@ enum TokenTypes {
     // Keywords.
     Print,
     Let,
+
+    EOF,
 }
+
+static KEYWORDS: Map<&'static str, TokenTypes> = phf_map! {
+    "let" => TokenTypes::Let,
+    "print" => TokenTypes::Print
+};
 
 impl ToString for TokenTypes {
     fn to_string(&self) -> String {
@@ -44,34 +53,37 @@ impl ToString for TokenTypes {
             TokenTypes::Star => '*'.to_string(),
             TokenTypes::Bang => '!'.to_string(),
             TokenTypes::Equal => '='.to_string(),
-            TokenTypes::Identifier => todo!(),
+            TokenTypes::Identifier => "Identifier".to_string(),
             TokenTypes::Number => todo!(),
             TokenTypes::Print => "print".to_string(),
             TokenTypes::Let => "let".to_string(),
+            TokenTypes::EOF => todo!(),
         }
     }
 }
 
 trait ToTokenType {
-    fn to_token_type(&self) -> Result<TokenTypes, &char>;
+    fn to_token_type(&self) -> Result<TokenTypes, String>;
 }
 
-impl ToTokenType for char {
-    fn to_token_type(&self) -> Result<TokenTypes, &char> {
-        match self {
-            '-' => Ok(TokenTypes::Minus),
-            '+' => Ok(TokenTypes::Plus),
-            ';' => Ok(TokenTypes::Semicolon),
-            '*' => Ok(TokenTypes::Star),
-            '!' => Ok(TokenTypes::Bang),
-            '=' => Ok(TokenTypes::Equal),
-            _ => Err(self),
+impl ToTokenType for String {
+    fn to_token_type(&self) -> Result<TokenTypes, String> {
+        match self.as_str() {
+            "-" => Ok(TokenTypes::Minus),
+            "+" => Ok(TokenTypes::Plus),
+            ";" => Ok(TokenTypes::Semicolon),
+            "*" => Ok(TokenTypes::Star),
+            "!" => Ok(TokenTypes::Bang),
+            "=" => Ok(TokenTypes::Equal),
+            "print" => Ok(TokenTypes::Print),
+            "let" => Ok(TokenTypes::Let),
+            _ => Err("Ops".to_string()),
         }
     }
 }
 
 struct Token {
-    raw: char,
+    lexeme: String,
     token_type: TokenTypes,
     line: usize,
 }
@@ -92,8 +104,8 @@ fn main() -> io::Result<()> {
 
     for token in tokens {
         println!(
-            "char {} with token {} on line {}",
-            token.raw,
+            "lexeme {} with token {} on line {}",
+            token.lexeme,
             token.token_type.to_string(),
             token.line
         );
@@ -103,22 +115,20 @@ fn main() -> io::Result<()> {
 }
 
 trait TokenStore {
-    fn add_token(&mut self, c: char, line: usize);
+    fn add_token(&mut self, lexeme: String, line: usize);
 }
 
 impl TokenStore for Vec<Token> {
-    fn add_token(&mut self, c: char, line: usize) {
-        let token_type = match c.to_token_type() {
+    fn add_token(&mut self, lexeme: String, line: usize) {
+        let token_type = match lexeme.to_token_type() {
             Ok(t) => t,
-            Err(char) => {
-                let mut message = "Unsupported character: ".to_string();
-                message.push(*char);
-                print_error(line, message);
+            Err(error) => {
+                print_error(line, "Unsupported lexeme: ".to_string() + &error);
                 panic!();
-            } 
+            }
         };
         self.push(Token {
-            raw: c,
+            lexeme,
             token_type,
             line,
         });
@@ -129,19 +139,98 @@ fn print_error(line: usize, message: String) {
     println!("[line {}] Error: {}", line, message);
 }
 
+fn is_whitespace(c: char) -> bool {
+    c == ' ' || c == '\r' || c == '\t'
+}
+
+fn scan_symbol(source: &Vec<char>, lexeme_start: usize, line: usize) -> Token {
+    let token_type = match source.get(lexeme_start).expect("derp") {
+        '-' => TokenTypes::Minus,
+        '+' => TokenTypes::Plus,
+        ';' => TokenTypes::Semicolon,
+        '*' => TokenTypes::Star,
+        '!' => TokenTypes::Bang,
+        '=' => TokenTypes::Equal,
+        _ => panic!("Unsupported symbol"),
+    };
+
+    Token {
+        lexeme: token_type.to_string(),
+        token_type,
+        line
+    }
+}
+
+fn scan_token(source: &Vec<char>, lexeme_start: usize, line: &mut usize) -> Token {
+    let start_char = source
+        .get(lexeme_start)
+        .expect("out of bounds when getting token char");
+    if start_char.is_ascii_digit() {
+        todo!();
+    } else if start_char.is_ascii_alphabetic() || *start_char == '_' {
+        let mut lexeme_len = 1;
+        let mut next_char = source
+            .get(lexeme_start + 1)
+            .expect("out of bounds getting next char");
+        while !is_whitespace(*next_char) {
+            if *next_char == '\n' {
+                *line += 1;
+                break;
+            }
+            lexeme_len += 1;
+            next_char = source
+                .get(lexeme_start + lexeme_len)
+                .expect("out of bounds when getting next char in lexeme");
+        }
+        let mut lexeme = String::new();
+        let lexeme_end = lexeme_start + lexeme_len - 1;
+        for i in lexeme_start..lexeme_end {
+            lexeme.push(*source.get(i).expect("wops"));
+        }
+        return match KEYWORDS.get(lexeme.as_str()) {
+            Some(_) => {
+                let token_type = lexeme.to_token_type().expect("ops");
+                Token {
+                    lexeme,
+                    token_type,
+                    line: *line,
+                }
+            }
+            None => Token {
+                lexeme,
+                token_type: TokenTypes::Identifier,
+                line: *line,
+            },
+        };
+    } else if start_char.is_ascii() {
+        return scan_symbol(source, lexeme_start, *line);
+    }
+    panic!("Unsupported character")
+}
+
 fn scan_source(source: &Vec<char>) -> Vec<Token> {
     let mut tokens = Vec::new();
     let mut line = 1;
 
-    for c in source {
-        if *c == ' ' {
+    let mut i = 0;
+
+    while i < source.len() {
+        let lexeme_start = i;
+        let current = source
+            .get(i)
+            .expect("out of bounds when getting source char");
+        if is_whitespace(*current) {
+            i += 1;
             continue;
         }
-        if *c == '\n' {
+        if *current == '\n' {
             line += 1;
+            i += 1;
             continue;
         }
-        tokens.add_token(*c, line);
+        let token = scan_token(source, lexeme_start, &mut line);
+        i += token.lexeme.len();
+        tokens.push(token);
     }
 
     tokens
