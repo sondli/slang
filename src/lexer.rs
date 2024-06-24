@@ -27,8 +27,6 @@ pub mod lexer {
         // Keywords.
         Print,
         Let,
-
-        EOF,
     }
 
     static KEYWORDS: Map<&'static str, TokenTypes> = phf_map! {
@@ -49,7 +47,6 @@ pub mod lexer {
                 TokenTypes::Number => "number".to_string(),
                 TokenTypes::Print => "print".to_string(),
                 TokenTypes::Let => "let".to_string(),
-                TokenTypes::EOF => todo!(),
                 TokenTypes::LeftParen => '('.to_string(),
                 TokenTypes::RightParen => ')'.to_string(),
                 TokenTypes::BangEqual => "!=".to_string(),
@@ -96,7 +93,7 @@ pub mod lexer {
         c == ' ' || c == '\r' || c == '\t'
     }
 
-    fn scan_symbol(source: &Vec<char>, lexeme_start: usize, line: &mut usize) -> Token {
+    fn scan_symbol(source: &Vec<char>, lexeme_start: usize) -> (String, TokenTypes) {
         let token_type = match source[lexeme_start] {
             '-' => TokenTypes::Minus,
             '+' => TokenTypes::Plus,
@@ -105,14 +102,13 @@ pub mod lexer {
             '!' => match source.get(lexeme_start + 1) {
                 Some(char) => {
                     if *char == '=' {
-                        *line += 1;
                         TokenTypes::BangEqual
                     } else {
                         TokenTypes::Bang
                     }
                 }
                 None => TokenTypes::Bang,
-            }
+            },
             '=' => {
                 if lexeme_start == source.len() - 1 || source[lexeme_start + 1] != '=' {
                     TokenTypes::Equal
@@ -140,89 +136,51 @@ pub mod lexer {
             _ => panic!("Unsupported symbol"),
         };
 
-        Token {
-            lexeme: token_type.to_string(),
-            token_type,
-            line: *line,
-        }
+        (token_type.to_string(), token_type)
     }
 
-    fn scan_number(source: &Vec<char>, lexeme_start: usize, line: &mut usize) -> Token {
-        let mut lexeme_len = 1;
-        let mut next_char = source[lexeme_start + 1];
+    fn scan_number(source: &Vec<char>, lexeme_start: usize) -> (String, TokenTypes) {
+        let mut lexeme = String::new();
+        let mut next_char = source[lexeme_start];
         while next_char.is_ascii_digit() {
-            if next_char == '\n' {
-                *line += 1;
-                break;
-            }
-            lexeme_len += 1;
-            next_char = source[lexeme_start + lexeme_len];
+            lexeme.push(next_char);
+            next_char = source[lexeme_start + lexeme.len()];
         }
         if next_char == '.' {
-            lexeme_len += 1;
-            next_char = source[lexeme_start + lexeme_len];
+            lexeme.push(next_char);
+            next_char = source[lexeme_start + lexeme.len()];
             while next_char.is_ascii_digit() {
-                if next_char == '\n' {
-                    *line += 1;
-                    break;
-                }
-                lexeme_len += 1;
-                next_char = source[lexeme_start + lexeme_len];
+                lexeme.push(next_char);
+                next_char = source[lexeme_start + lexeme.len()];
             }
         }
-        let mut lexeme = String::new();
-        let lexeme_end = lexeme_start + lexeme_len;
-        for i in lexeme_start..lexeme_end {
-            lexeme.push(source[i]);
-        }
-        return Token {
-            lexeme,
-            token_type: TokenTypes::Number,
-            line: *line,
-        };
+        return (lexeme, TokenTypes::Number);
     }
 
-    fn scan_alphabetic(source: &Vec<char>, lexeme_start: usize, line: &mut usize) -> Token {
-        let mut lexeme_len = 1;
-        let mut next_char = source[lexeme_start + 1];
-        while next_char.is_ascii_alphabetic() || next_char.is_ascii_digit() || next_char == '_' {
-            if next_char == '\n' {
-                *line += 1;
-                break;
-            }
-            lexeme_len += 1;
-            next_char = source[lexeme_start + lexeme_len];
-        }
+    fn scan_alphabetic(source: &Vec<char>, lexeme_start: usize) -> (String, TokenTypes) {
         let mut lexeme = String::new();
-        let lexeme_end = lexeme_start + lexeme_len;
-        for i in lexeme_start..lexeme_end {
-            lexeme.push(source[i]);
+        let mut next_char = source[lexeme_start];
+        while next_char.is_ascii_alphabetic() || next_char.is_ascii_digit() || next_char == '_' {
+            lexeme.push(next_char);
+            next_char = source[lexeme_start + lexeme.len()];
         }
         return match KEYWORDS.get(lexeme.as_str()) {
             Some(_) => {
                 let token_type = lexeme.to_token_type().expect("ops");
-                Token {
-                    lexeme,
-                    token_type,
-                    line: *line,
-                }
+                (lexeme, token_type)
             }
-            None => Token {
-                lexeme,
-                token_type: TokenTypes::Identifier,
-                line: *line,
-            },
+            None => (lexeme, TokenTypes::Identifier),
         };
     }
 
-    fn scan_token(source: &Vec<char>, lexeme_start: usize, line: &mut usize) -> Token {
+    fn scan_token(source: &Vec<char>, lexeme_start: usize) -> (String, TokenTypes) {
         let start_char = source[lexeme_start];
         if start_char.is_ascii_digit() {
-            return scan_number(source, lexeme_start, line);
+            return scan_number(source, lexeme_start);
         } else if start_char.is_ascii_alphabetic() || start_char == '_' {
-            return scan_alphabetic(source, lexeme_start, line);
+            return scan_alphabetic(source, lexeme_start);
         } else if start_char.is_ascii() {
-            return scan_symbol(source, lexeme_start, line);
+            return scan_symbol(source, lexeme_start);
         }
         panic!("Unsupported character")
     }
@@ -233,21 +191,24 @@ pub mod lexer {
         let mut skip_n_iterations = 0;
 
         for (i, current) in source.iter().enumerate() {
-            if skip_n_iterations > 0 {
-                skip_n_iterations -= 1;
-                continue;
-            }
-            let lexeme_start = i;
-            if is_whitespace(*current) {
-                continue;
-            }
             if *current == '\n' {
                 line += 1;
                 continue;
             }
-            let token = scan_token(source, lexeme_start, &mut line);
-            skip_n_iterations = token.lexeme.len() - 1;
-            tokens.push(token);
+            if skip_n_iterations > 0 {
+                skip_n_iterations -= 1;
+                continue;
+            }
+            if is_whitespace(*current) {
+                continue;
+            }
+            let (lexeme, token_type) = scan_token(source, i);
+            skip_n_iterations = lexeme.len() - 1;
+            tokens.push(Token {
+                lexeme,
+                token_type,
+                line,
+            });
         }
 
         tokens
