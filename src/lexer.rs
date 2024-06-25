@@ -1,4 +1,6 @@
 pub mod lexer {
+    use core::panic;
+    use std::process::exit;
     use phf::{phf_map, Map};
 
     pub enum TokenTypes {
@@ -93,96 +95,136 @@ pub mod lexer {
         c == ' ' || c == '\r' || c == '\t'
     }
 
-    fn scan_symbol(source: &Vec<char>, lexeme_start: usize) -> (String, TokenTypes) {
-        let token_type = match source[lexeme_start] {
+    fn scan_symbol(
+        source: &Vec<char>,
+        lexeme_start: usize,
+    ) -> Result<(String, TokenTypes), String> {
+        let mut lexeme = String::new();
+        let char = match source.get(lexeme_start) {
+            Some(char) => char,
+            None => return Err(String::from("Out of bounds trying to scan symbol")),
+        };
+        let next_char_is_equal = match source.get(lexeme_start + 1) {
+            Some(next_char) => *next_char == '=',
+            None => false,
+        };
+        let token_type = match char {
             '-' => TokenTypes::Minus,
             '+' => TokenTypes::Plus,
             ';' => TokenTypes::Semicolon,
             '*' => TokenTypes::Star,
-            '!' => match source.get(lexeme_start + 1) {
-                Some(char) => {
-                    if *char == '=' {
-                        TokenTypes::BangEqual
-                    } else {
-                        TokenTypes::Bang
-                    }
-                }
-                None => TokenTypes::Bang,
-            },
-            '=' => {
-                if lexeme_start == source.len() - 1 || source[lexeme_start + 1] != '=' {
-                    TokenTypes::Equal
+            '!' => {
+                if next_char_is_equal {
+                    TokenTypes::BangEqual
                 } else {
+                    TokenTypes::Bang
+                }
+            }
+            '=' => {
+                if next_char_is_equal {
                     TokenTypes::EqualEqual
+                } else {
+                    TokenTypes::Equal
                 }
             }
             '(' => TokenTypes::LeftParen,
             ')' => TokenTypes::RightParen,
             '>' => {
-                if lexeme_start == source.len() - 1 || source[lexeme_start + 1] != '=' {
-                    TokenTypes::Greater
-                } else {
+                if next_char_is_equal {
                     TokenTypes::GreaterEqual
+                } else {
+                    TokenTypes::Greater
                 }
             }
             '<' => {
-                if lexeme_start == source.len() - 1 || source[lexeme_start + 1] != '=' {
-                    TokenTypes::Less
-                } else {
+                if next_char_is_equal {
                     TokenTypes::LessEqual
+                } else {
+                    TokenTypes::Less
                 }
             }
-
-            _ => panic!("Unsupported symbol"),
+            _ => return Err(format!("Unsupported character: {}", char)),
         };
 
-        (token_type.to_string(), token_type)
+        lexeme.push(*char);
+        if next_char_is_equal {
+            lexeme.push('=');
+        }
+
+        Ok((lexeme, token_type))
     }
 
-    fn scan_number(source: &Vec<char>, lexeme_start: usize) -> (String, TokenTypes) {
+    fn scan_number(
+        source: &Vec<char>,
+        lexeme_start: usize,
+    ) -> Result<(String, TokenTypes), String> {
         let mut lexeme = String::new();
-        let mut next_char = source[lexeme_start];
+        let mut next_char = match source.get(lexeme_start) {
+            Some(char) => *char,
+            None => return Err(String::from("Out of bounds trying to scan number")),
+        };
         while next_char.is_ascii_digit() {
             lexeme.push(next_char);
-            next_char = source[lexeme_start + lexeme.len()];
+            next_char = match source.get(lexeme_start + lexeme.len()) {
+                Some(char) => *char,
+                None => return Err(String::from("Out of bounds trying to scan number")),
+            };
         }
         if next_char == '.' {
             lexeme.push(next_char);
-            next_char = source[lexeme_start + lexeme.len()];
+            next_char = match source.get(lexeme_start + lexeme.len()) {
+                Some(char) => *char,
+                None => return Err(String::from("Out of bounds trying to scan number")),
+            };
             while next_char.is_ascii_digit() {
                 lexeme.push(next_char);
-                next_char = source[lexeme_start + lexeme.len()];
+                next_char = match source.get(lexeme_start + lexeme.len()) {
+                    Some(char) => *char,
+                    None => return Err(String::from("Out of bounds trying to scan number")),
+                };
             }
         }
-        return (lexeme, TokenTypes::Number);
+        return Ok((lexeme, TokenTypes::Number));
     }
 
-    fn scan_alphabetic(source: &Vec<char>, lexeme_start: usize) -> (String, TokenTypes) {
+    fn scan_alphabetic(
+        source: &Vec<char>,
+        lexeme_start: usize,
+    ) -> Result<(String, TokenTypes), String> {
         let mut lexeme = String::new();
-        let mut next_char = source[lexeme_start];
-        while next_char.is_ascii_alphabetic() || next_char.is_ascii_digit() || next_char == '_' {
-            lexeme.push(next_char);
-            next_char = source[lexeme_start + lexeme.len()];
+        let mut next_char = match source.get(lexeme_start) {
+            Some(next_char) => next_char,
+            None => return Err("Out of bounds trying to scan alphabetic token".to_string()),
+        };
+       while next_char.is_ascii_alphabetic() || next_char.is_ascii_digit() || *next_char == '_' {
+            lexeme.push(*next_char);
+            next_char = match source.get(lexeme_start + lexeme.len()) {
+                Some(next_char) => next_char,
+                None => return Err("Out of bounds trying to scan alphabetic token".to_string()),
+            };
         }
         return match KEYWORDS.get(lexeme.as_str()) {
-            Some(_) => {
-                let token_type = lexeme.to_token_type().expect("ops");
-                (lexeme, token_type)
-            }
-            None => (lexeme, TokenTypes::Identifier),
+            Some(_) => match lexeme.to_token_type() {
+                Ok(token_type) => Ok((lexeme, token_type)),
+                Err(e) => return Err(e),
+            },
+            None => Ok((lexeme, TokenTypes::Identifier)),
         };
     }
 
-    fn scan_token(source: &Vec<char>, lexeme_start: usize) -> (String, TokenTypes) {
-        let start_char = source[lexeme_start];
+    fn scan_token(source: &Vec<char>, lexeme_start: usize) -> Result<(String, TokenTypes), String> {
+        let start_char = match source.get(lexeme_start) {
+            Some(char) => *char,
+            None => return Err("Out of bounds trying to scan token".to_string())
+        };
         if start_char.is_ascii_digit() {
             return scan_number(source, lexeme_start);
         } else if start_char.is_ascii_alphabetic() || start_char == '_' {
             return scan_alphabetic(source, lexeme_start);
         } else if start_char.is_ascii() {
             return scan_symbol(source, lexeme_start);
-        }
-        panic!("Unsupported character")
+        }   
+        panic!()
     }
 
     pub fn scan_source(source: &Vec<char>) -> Vec<Token> {
@@ -202,7 +244,13 @@ pub mod lexer {
             if is_whitespace(*current) {
                 continue;
             }
-            let (lexeme, token_type) = scan_token(source, i);
+            let (lexeme, token_type) = match scan_token(source, i) {
+                Ok(tuple) => tuple,
+                Err(e) => {
+                    print_error(line, e);
+                    exit(1);
+                }
+            };
             skip_n_iterations = lexeme.len() - 1;
             tokens.push(Token {
                 lexeme,
